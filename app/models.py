@@ -1,7 +1,7 @@
 """
 Pydantic Models for API Request/Response Schemas
 """
-from typing import Optional, List, Dict, Any, Union  # Add Union to imports
+from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -13,6 +13,7 @@ class StreamingServiceEnum(str, Enum):
     HBO = "hbo"
     PEACOCK = "peacock"
     APPLE = "apple"
+    HULU = "hulu"
 
 
 class ContentTypeEnum(str, Enum):
@@ -20,27 +21,26 @@ class ContentTypeEnum(str, Enum):
     SERIES = "series"
 
 
-
 class StreamingOption(BaseModel):
     """Represents a streaming option for a title"""
-    service: str
-    service_name: str
-    type: str
+    service: str = ""
+    service_name: str = ""
+    type: str = "unknown"  # subscription, rent, buy, free
     link: Optional[str] = None
     quality: Optional[str] = None
-    price: Optional[Dict[str, Any]] = None
-    available_since: Optional[Union[str, int]] = None  # ← FIXED
+    price: Optional[Any] = None  # Can be dict, string, or None
+    available_since: Optional[Union[str, int]] = None  # Can be timestamp int or string
     leaving_soon: Optional[bool] = None
-    expiry_date: Optional[Union[str, int]] = None  # ← ALSO FIX THIS
+    expiry_date: Optional[Union[str, int]] = None  # Can be timestamp int or string
 
 
 class Title(BaseModel):
     """Represents a movie or TV series"""
-    id: str
+    id: str = ""
     imdb_id: Optional[str] = None
     tmdb_id: Optional[str] = None
-    title: str
-    type: str  # movie or series
+    title: str = "Unknown"
+    type: str = "movie"  # movie or series
     year: Optional[int] = None
     overview: Optional[str] = None
     genres: List[str] = []

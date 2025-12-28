@@ -33,6 +33,11 @@ STREAMING_SERVICES = {
         "id": "apple",
         "name": "Apple TV+",
         "description": "Apple TV Plus streaming service"
+    },
+    "hulu": {
+        "id": "hulu",
+        "name": "Hulu",
+        "description": "Hulu streaming service"
     }
 }
 
@@ -43,7 +48,8 @@ SERVICE_API_IDS = {
     "disney": "disney",
     "hbo": "hbo",  # Max/HBO Max
     "peacock": "peacock",
-    "apple": "apple"
+    "apple": "apple",
+    "hulu": "hulu"
 }
 
 # Supported countries (default to US)

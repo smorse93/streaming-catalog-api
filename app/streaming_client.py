@@ -27,6 +27,30 @@ logger = logging.getLogger(__name__)
 _cache = TTLCache(maxsize=1000, ttl=3600)
 
 
+def safe_get(data: Any, *keys, default=None):
+    """Safely get nested values from dicts, handling None and missing keys."""
+    result = data
+    for key in keys:
+        if result is None:
+            return default
+        if isinstance(result, dict):
+            result = result.get(key)
+        else:
+            return default
+    return result if result is not None else default
+
+
+def safe_get_name(item: Any) -> str:
+    """Extract name from an item that could be a string, dict, or other."""
+    if item is None:
+        return ""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        return item.get("name", "") or item.get("id", "") or ""
+    return str(item)
+
+
 class StreamingAPIClient:
     """
     Client for the Streaming Availability API.
@@ -99,7 +123,43 @@ class StreamingAPIClient:
                 logger.error(f"Request error: {str(e)}")
                 raise
     
-    def _parse_title(self, show_data: Dict[str, Any], country: str = DEFAULT_COUNTRY) -> Title:
+    def _parse_streaming_option(self, option: Any) -> Optional[StreamingOption]:
+        """Parse a single streaming option, handling various data formats."""
+        if option is None:
+            return None
+        
+        if not isinstance(option, dict):
+            return None
+        
+        try:
+            # Handle service being either a dict or string
+            service_data = option.get("service")
+            if isinstance(service_data, str):
+                service_id = service_data
+                service_name = service_data
+            elif isinstance(service_data, dict):
+                service_id = service_data.get("id", "") or ""
+                service_name = service_data.get("name", "") or service_id
+            else:
+                service_id = ""
+                service_name = ""
+            
+            return StreamingOption(
+                service=service_id,
+                service_name=service_name,
+                type=option.get("type", "unknown") or "unknown",
+                link=option.get("link"),
+                quality=option.get("quality"),
+                price=option.get("price"),
+                available_since=option.get("availableSince"),
+                leaving_soon=option.get("leavingSoon"),
+                expiry_date=option.get("expiringDate") or option.get("expiring")
+            )
+        except Exception as e:
+            logger.warning(f"Error parsing streaming option: {e}")
+            return None
+
+    def _parse_title(self, show_data: Any, country: str = DEFAULT_COUNTRY) -> Optional[Title]:
         """
         Parse API show data into a Title model.
         
@@ -108,61 +168,136 @@ class StreamingAPIClient:
             country: Country code for streaming options
             
         Returns:
-            Parsed Title object
+            Parsed Title object or None if parsing fails
         """
-        # Extract streaming options for the specified country
-        streaming_options = []
-        streaming_info = show_data.get("streamingOptions", {}).get(country, [])
+        if show_data is None or not isinstance(show_data, dict):
+            return None
         
-        for option in streaming_info:
-            service_id = option.get("service", {}).get("id", "")
-            streaming_options.append(StreamingOption(
-                service=service_id,
-                service_name=option.get("service", {}).get("name", service_id),
-                type=option.get("type", "unknown"),
-                link=option.get("link"),
-                quality=option.get("quality"),
-                price=option.get("price"),
-                available_since=option.get("availableSince"),
-                leaving_soon=option.get("leavingSoon"),
-                expiry_date=option.get("expiringDate")
-            ))
-        
-        # Extract genres
-        genres = [g.get("name", "") for g in show_data.get("genres", [])]
-        
-        # Extract cast
-        cast = [c.get("name", "") for c in show_data.get("cast", [])][:10]  # Limit to top 10
-        
-        # Extract directors
-        directors = [d.get("name", "") for d in show_data.get("directors", [])]
-        
-        # Get poster and backdrop URLs
-        poster_url = None
-        backdrop_url = None
-        image_set = show_data.get("imageSet", {})
-        if image_set:
-            poster_url = image_set.get("verticalPoster", {}).get("w480")
-            backdrop_url = image_set.get("horizontalBackdrop", {}).get("w720")
-        
-        return Title(
-            id=show_data.get("id", ""),
-            imdb_id=show_data.get("imdbId"),
-            tmdb_id=str(show_data.get("tmdbId", "")) if show_data.get("tmdbId") else None,
-            title=show_data.get("title", "Unknown"),
-            type=show_data.get("showType", "movie"),
-            year=show_data.get("releaseYear") or show_data.get("firstAirYear"),
-            overview=show_data.get("overview"),
-            genres=genres,
-            imdb_rating=show_data.get("rating"),  # API provides IMDB rating directly
-            imdb_vote_count=show_data.get("ratingCount"),
-            runtime=show_data.get("runtime"),
-            poster_url=poster_url,
-            backdrop_url=backdrop_url,
-            directors=directors,
-            cast=cast,
-            streaming_options=streaming_options
-        )
+        try:
+            # Extract streaming options for the specified country
+            streaming_options = []
+            streaming_info = safe_get(show_data, "streamingOptions", country, default=[])
+            
+            if isinstance(streaming_info, list):
+                for option in streaming_info:
+                    parsed = self._parse_streaming_option(option)
+                    if parsed:
+                        streaming_options.append(parsed)
+            
+            # Extract genres - handle list of strings or list of dicts
+            genres = []
+            raw_genres = show_data.get("genres", [])
+            if isinstance(raw_genres, list):
+                for g in raw_genres:
+                    name = safe_get_name(g)
+                    if name:
+                        genres.append(name)
+            
+            # Extract cast - handle list of strings or list of dicts
+            cast = []
+            raw_cast = show_data.get("cast", [])
+            if isinstance(raw_cast, list):
+                for c in raw_cast[:10]:  # Limit to top 10
+                    name = safe_get_name(c)
+                    if name:
+                        cast.append(name)
+            
+            # Extract directors - handle list of strings or list of dicts
+            directors = []
+            raw_directors = show_data.get("directors", [])
+            if isinstance(raw_directors, list):
+                for d in raw_directors:
+                    name = safe_get_name(d)
+                    if name:
+                        directors.append(name)
+            
+            # Get poster and backdrop URLs - handle various structures
+            poster_url = None
+            backdrop_url = None
+            image_set = show_data.get("imageSet")
+            
+            if isinstance(image_set, dict):
+                # Try different poster paths
+                vertical_poster = image_set.get("verticalPoster")
+                if isinstance(vertical_poster, dict):
+                    poster_url = vertical_poster.get("w480") or vertical_poster.get("w360") or vertical_poster.get("w240")
+                elif isinstance(vertical_poster, str):
+                    poster_url = vertical_poster
+                
+                # Try different backdrop paths
+                horizontal_backdrop = image_set.get("horizontalBackdrop")
+                if isinstance(horizontal_backdrop, dict):
+                    backdrop_url = horizontal_backdrop.get("w720") or horizontal_backdrop.get("w480") or horizontal_backdrop.get("w360")
+                elif isinstance(horizontal_backdrop, str):
+                    backdrop_url = horizontal_backdrop
+            
+            # Fallback to direct poster/backdrop fields
+            if not poster_url:
+                poster_url = show_data.get("posterUrl") or show_data.get("poster")
+            if not backdrop_url:
+                backdrop_url = show_data.get("backdropUrl") or show_data.get("backdrop")
+            
+            # Get year - try multiple fields
+            year = show_data.get("releaseYear") or show_data.get("firstAirYear") or show_data.get("year")
+            if year and not isinstance(year, int):
+                try:
+                    year = int(year)
+                except (ValueError, TypeError):
+                    year = None
+            
+            # Get rating - handle different formats
+            rating = show_data.get("rating")
+            if rating is not None:
+                try:
+                    rating = float(rating)
+                    # If rating is on 0-100 scale, convert to 0-10
+                    if rating > 10:
+                        rating = rating / 10
+                except (ValueError, TypeError):
+                    rating = None
+            
+            # Get vote count
+            vote_count = show_data.get("ratingCount") or show_data.get("voteCount")
+            if vote_count and not isinstance(vote_count, int):
+                try:
+                    vote_count = int(vote_count)
+                except (ValueError, TypeError):
+                    vote_count = None
+            
+            # Get runtime
+            runtime = show_data.get("runtime")
+            if runtime and not isinstance(runtime, int):
+                try:
+                    runtime = int(runtime)
+                except (ValueError, TypeError):
+                    runtime = None
+            
+            # Get TMDB ID
+            tmdb_id = show_data.get("tmdbId")
+            if tmdb_id is not None:
+                tmdb_id = str(tmdb_id)
+            
+            return Title(
+                id=str(show_data.get("id", "")) or "",
+                imdb_id=show_data.get("imdbId"),
+                tmdb_id=tmdb_id,
+                title=show_data.get("title", "Unknown") or "Unknown",
+                type=show_data.get("showType", "movie") or "movie",
+                year=year,
+                overview=show_data.get("overview"),
+                genres=genres,
+                imdb_rating=rating,
+                imdb_vote_count=vote_count,
+                runtime=runtime,
+                poster_url=poster_url,
+                backdrop_url=backdrop_url,
+                directors=directors,
+                cast=cast,
+                streaming_options=streaming_options
+            )
+        except Exception as e:
+            logger.error(f"Error parsing title: {e}")
+            return None
     
     async def get_catalog_by_service(
         self,
@@ -178,20 +313,6 @@ class StreamingAPIClient:
     ) -> Dict[str, Any]:
         """
         Get the catalog for a specific streaming service.
-        
-        Args:
-            service: Service ID (netflix, prime, disney, hbo, peacock, apple)
-            country: Country code (default: us)
-            content_type: Filter by type (movie or series)
-            page: Page number for pagination
-            page_size: Number of results per page
-            min_rating: Minimum IMDB rating filter
-            max_rating: Maximum IMDB rating filter
-            genres: List of genre names to filter by
-            order_by: Sort order (rating, year, title)
-            
-        Returns:
-            Dictionary with catalog data and pagination info
         """
         service_id = SERVICE_API_IDS.get(service, service)
         
@@ -206,7 +327,7 @@ class StreamingAPIClient:
             params["show_type"] = content_type
         
         if min_rating is not None:
-            params["rating_min"] = int(min_rating * 10)  # API uses 0-100 scale
+            params["rating_min"] = int(min_rating * 10)
         
         if max_rating is not None:
             params["rating_max"] = int(max_rating * 10)
@@ -214,17 +335,19 @@ class StreamingAPIClient:
         if genres:
             params["genres"] = ",".join(genres)
         
-        # Handle pagination with cursor
         params["output_language"] = "en"
         
         try:
             data = await self._make_request("shows/search/filters", params)
             
-            shows = data.get("shows", [])
-            titles = [self._parse_title(show, country) for show in shows]
+            shows = data.get("shows", []) if isinstance(data, dict) else []
+            titles = []
+            for show in shows:
+                parsed = self._parse_title(show, country)
+                if parsed:
+                    titles.append(parsed)
             
-            # Calculate pagination
-            has_more = data.get("hasMore", False)
+            has_more = data.get("hasMore", False) if isinstance(data, dict) else False
             
             return {
                 "titles": titles,
@@ -232,7 +355,7 @@ class StreamingAPIClient:
                 "page": page,
                 "page_size": page_size,
                 "has_more": has_more,
-                "cursor": data.get("nextCursor")
+                "cursor": data.get("nextCursor") if isinstance(data, dict) else None
             }
             
         except Exception as e:
@@ -244,16 +367,7 @@ class StreamingAPIClient:
         imdb_id: str, 
         country: str = DEFAULT_COUNTRY
     ) -> Optional[Title]:
-        """
-        Get a specific title by IMDB ID.
-        
-        Args:
-            imdb_id: IMDB ID (e.g., tt0111161)
-            country: Country code for streaming availability
-            
-        Returns:
-            Title object or None if not found
-        """
+        """Get a specific title by IMDB ID."""
         params = {"country": country}
         
         try:
@@ -271,18 +385,7 @@ class StreamingAPIClient:
         services: Optional[List[str]] = None,
         content_type: Optional[str] = None
     ) -> List[Title]:
-        """
-        Search for titles by name.
-        
-        Args:
-            query: Search query string
-            country: Country code
-            services: List of service IDs to filter by
-            content_type: Filter by type (movie or series)
-            
-        Returns:
-            List of matching Title objects
-        """
+        """Search for titles by name."""
         params = {
             "country": country,
             "title": query,
@@ -298,8 +401,22 @@ class StreamingAPIClient:
         
         try:
             data = await self._make_request("shows/search/title", params)
-            shows = data if isinstance(data, list) else data.get("shows", [])
-            return [self._parse_title(show, country) for show in shows]
+            
+            # Handle both list and dict responses
+            if isinstance(data, list):
+                shows = data
+            elif isinstance(data, dict):
+                shows = data.get("shows", []) or data.get("results", []) or []
+            else:
+                shows = []
+            
+            titles = []
+            for show in shows:
+                parsed = self._parse_title(show, country)
+                if parsed:
+                    titles.append(parsed)
+            
+            return titles
         except Exception as e:
             logger.error(f"Error searching titles: {str(e)}")
             raise
@@ -311,18 +428,7 @@ class StreamingAPIClient:
         content_type: Optional[str] = None,
         limit: int = 50
     ) -> List[Title]:
-        """
-        Get top rated titles for a streaming service.
-        
-        Args:
-            service: Service ID
-            country: Country code
-            content_type: Filter by type (movie or series)
-            limit: Maximum number of results
-            
-        Returns:
-            List of Title objects sorted by IMDB rating
-        """
+        """Get top rated titles for a streaming service."""
         result = await self.get_catalog_by_service(
             service=service,
             country=country,
@@ -340,18 +446,7 @@ class StreamingAPIClient:
         content_type: Optional[str] = None,
         min_rating: Optional[float] = None
     ) -> Dict[str, Any]:
-        """
-        Get catalog from multiple services and find unique/overlapping titles.
-        
-        Args:
-            services: List of service IDs
-            country: Country code
-            content_type: Filter by type
-            min_rating: Minimum IMDB rating
-            
-        Returns:
-            Dictionary with combined catalog and overlap statistics
-        """
+        """Get catalog from multiple services."""
         service_ids = [SERVICE_API_IDS.get(s, s) for s in services]
         
         params = {
@@ -370,10 +465,14 @@ class StreamingAPIClient:
         
         try:
             data = await self._make_request("shows/search/filters", params)
-            shows = data.get("shows", [])
-            titles = [self._parse_title(show, country) for show in shows]
+            shows = data.get("shows", []) if isinstance(data, dict) else []
             
-            # Calculate service overlap
+            titles = []
+            for show in shows:
+                parsed = self._parse_title(show, country)
+                if parsed:
+                    titles.append(parsed)
+            
             service_counts = {s: 0 for s in services}
             for title in titles:
                 for opt in title.streaming_options:
@@ -395,17 +494,7 @@ class StreamingAPIClient:
         services: List[str],
         country: str = DEFAULT_COUNTRY
     ) -> Dict[str, Any]:
-        """
-        Compare catalogs between multiple streaming services.
-        
-        Args:
-            services: List of service IDs to compare
-            country: Country code
-            
-        Returns:
-            Comparison statistics including catalog sizes and overlap
-        """
-        # Fetch catalogs concurrently
+        """Compare catalogs between multiple streaming services."""
         tasks = [
             self.get_catalog_by_service(service, country, page_size=100)
             for service in services
@@ -422,22 +511,23 @@ class StreamingAPIClient:
                 continue
             
             titles = result.get("titles", [])
+            ratings = [t.imdb_rating for t in titles if t.imdb_rating is not None]
+            avg_rating = sum(ratings) / len(ratings) if ratings else 0
+            
             service_data[service] = {
                 "name": STREAMING_SERVICES.get(service, {}).get("name", service),
                 "total_titles": len(titles),
-                "avg_imdb_rating": sum(t.imdb_rating or 0 for t in titles) / len(titles) if titles else 0,
+                "avg_imdb_rating": avg_rating,
                 "movies": len([t for t in titles if t.type == "movie"]),
                 "series": len([t for t in titles if t.type == "series"])
             }
             
-            # Track IMDB IDs for overlap calculation
             for title in titles:
                 if title.imdb_id:
                     if title.imdb_id not in all_imdb_ids:
                         all_imdb_ids[title.imdb_id] = []
                     all_imdb_ids[title.imdb_id].append(service)
         
-        # Calculate overlaps
         overlap_stats = {
             "unique_titles": len(all_imdb_ids),
             "multi_service_titles": len([k for k, v in all_imdb_ids.items() if len(v) > 1]),
