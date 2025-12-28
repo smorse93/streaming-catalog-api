@@ -1,7 +1,7 @@
 """
 Pydantic Models for API Request/Response Schemas
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union  # Add Union to imports
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -20,17 +20,18 @@ class ContentTypeEnum(str, Enum):
     SERIES = "series"
 
 
+
 class StreamingOption(BaseModel):
     """Represents a streaming option for a title"""
     service: str
     service_name: str
-    type: str  # subscription, rent, buy, free
+    type: str
     link: Optional[str] = None
     quality: Optional[str] = None
     price: Optional[Dict[str, Any]] = None
-    available_since: Optional[str] = None
+    available_since: Optional[Union[str, int]] = None  # ← FIXED
     leaving_soon: Optional[bool] = None
-    expiry_date: Optional[str] = None
+    expiry_date: Optional[Union[str, int]] = None  # ← ALSO FIX THIS
 
 
 class Title(BaseModel):
