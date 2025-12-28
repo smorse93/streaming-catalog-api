@@ -320,7 +320,7 @@ class StreamingAPIClient:
             "country": country,
             "catalogs": service_id,
             "order_by": order_by,
-            "order_direction": "desc" if order_by == "rating" else "asc"
+            "order_direction": "desc" if order_by == "rating" else "asc",
             "limit": page_size
 
         }
