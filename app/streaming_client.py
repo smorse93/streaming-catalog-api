@@ -322,7 +322,6 @@ class StreamingAPIClient:
             "order_by": order_by,
             "order_direction": "desc" if order_by == "rating" else "asc",
             "limit": page_size
-
         }
         
         if content_type:
