@@ -1,0 +1,15 @@
+# Render.com deployment configuration
+# This enables one-click deployment to Render
+
+services:
+  - type: web
+    name: streaming-catalog-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: RAPIDAPI_KEY
+        sync: false  # You'll set this manually in dashboard
+      - key: PYTHON_VERSION
+        value: 3.11.0
